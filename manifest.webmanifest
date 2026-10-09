@@ -1,0 +1,22 @@
+{
+  "name": "Project Log",
+  "short_name": "Project Log",
+  "description": "Track progress across many projects: per-project timelines, daily summaries and a calendar.",
+  "id": "./",
+  "start_url": "./#/projects",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f6f3",
+  "theme_color": "#f6f6f3",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Log an update", "url": "./?add#/projects", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Daily", "url": "./#/daily" },
+    { "name": "Calendar", "url": "./#/calendar" }
+  ]
+}
