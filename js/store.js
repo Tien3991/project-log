@@ -5,7 +5,9 @@
 //     profiles:        [{ id, name, color, sort, createdAt, updatedAt }],
 //     deletedProfiles: { [profileId]: deletedAt },
 //     data: { [profileId]: { projects: [...], updates: [...], deleted: { [id]: deletedAt } } } }
-//   project: { id, name, color, archived, order, createdAt, updatedAt }   (order: position in 'Custom order')
+//   project: { id, name, color, status, archived, order, createdAt, updatedAt }
+//            status: active | inactive | archived ('archived' is kept for older app versions)
+//            order:  position in 'My order'
 //   update:  { id, projectId, date: 'YYYY-MM-DD', text, createdAt, updatedAt }
 //
 // Device state is never synced: active profile, theme, week start, sync credentials, …
@@ -13,7 +15,7 @@
 // Two copies merge record by record. The newest updatedAt wins, and deletions are kept
 // as tombstones, so edits made offline on several devices combine instead of overwriting.
 
-import { todayKey, addDays, isValidKey } from './dates.js';
+import { todayKey, toKey, addDays, isValidKey } from './dates.js';
 
 export const DOC_KEY = 'project-log:v2';
 export const DEVICE_KEY = 'project-log:device';
@@ -24,7 +26,8 @@ const LEGACY_KEY = 'project-log:v1';
 const DEFAULT_PROFILE_ID = 'default';
 const EPOCH = '1970-01-01T00:00:00.000Z';
 const TOMBSTONE_TTL = 400 * 864e5;
-const SORTS = ['recent', 'name', 'created', 'manual'];
+const SORTS = ['manual', 'name', 'recent', 'idle'];   // my order, A–Z, most / least recently active
+export const STATUSES = ['active', 'inactive', 'archived'];
 
 export const PALETTE = [
   '#3b82f6', '#16a34a', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899',
@@ -35,7 +38,7 @@ const DEVICE_DEFAULTS = {
   activeProfile: null,
   weekStart: 1,            // 1 = Monday, 0 = Sunday
   theme: 'system',         // system | light | dark
-  showArchived: {},        // per profile
+  collapsed: {},           // per profile: { inactive, archived } sections on the Projects tab
   lastBackupAt: null,
   backupNagUntil: null,
   sync: null,              // { repo, token, path, lastSyncAt, lastError, dirty }
@@ -60,19 +63,31 @@ let saveErrorHandler = (e) => console.error(e);
 
 const emptyData = () => ({ projects: [], updates: [], deleted: {} });
 
-const shapeProfile = (p) => ({
-  id: p.id, name: p.name, color: str(p.color, PALETTE[0]), sort: SORTS.includes(p.sort) ? p.sort : 'recent',
+/** Known fields first, then any fields a newer app version added, kept so syncing through this copy doesn't drop them. */
+function withExtras(known, raw) {
+  for (const k of Object.keys(raw).filter((key) => !(key in known)).sort()) known[k] = raw[k];
+  return known;
+}
+
+const sortOf = (p) => (SORTS.includes(p.sort) ? p.sort : 'recent');   // retired 'created' → 'recent'
+const statusOf = (p) => (STATUSES.includes(p.status) ? p.status : p.archived ? 'archived' : 'active');
+
+const shapeProfile = (p) => withExtras({
+  id: p.id, name: p.name, color: str(p.color, PALETTE[0]), sort: sortOf(p),
   createdAt: str(p.createdAt, EPOCH), updatedAt: str(p.updatedAt, str(p.createdAt, EPOCH)),
-});
-const shapeProject = (p) => ({
-  id: p.id, name: p.name, color: str(p.color, PALETTE[0]), archived: !!p.archived,
-  order: Number.isFinite(p.order) ? p.order : null,
-  createdAt: str(p.createdAt, EPOCH), updatedAt: str(p.updatedAt, str(p.createdAt, EPOCH)),
-});
-const shapeUpdate = (u) => ({
+}, p);
+const shapeProject = (p) => {
+  const status = statusOf(p);
+  return withExtras({
+    id: p.id, name: p.name, color: str(p.color, PALETTE[0]), status, archived: status === 'archived',
+    order: Number.isFinite(p.order) ? p.order : null,
+    createdAt: str(p.createdAt, EPOCH), updatedAt: str(p.updatedAt, str(p.createdAt, EPOCH)),
+  }, p);
+};
+const shapeUpdate = (u) => withExtras({
   id: u.id, projectId: u.projectId, date: u.date, text: u.text,
   createdAt: str(u.createdAt, EPOCH), updatedAt: str(u.updatedAt, str(u.createdAt, EPOCH)),
-});
+}, u);
 
 const cleanProjects = (list) => (Array.isArray(list) ? list : [])
   .filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string')
@@ -165,6 +180,7 @@ function read(key) {
 
 function load() {
   device = { ...DEVICE_DEFAULTS, ...read(DEVICE_KEY) };
+  delete device.showArchived;   // replaced by collapsible sections
   const raw = read(DOC_KEY);
   doc = normalizeDoc(raw);
   if (!raw) {
@@ -183,7 +199,7 @@ function migrateV1(legacy) {
   const s = legacy.settings ?? {};
   for (const k of ['weekStart', 'theme', 'lastBackupAt', 'backupNagUntil']) if (s[k] != null) device[k] = s[k];
   device.activeProfile = p.id;
-  device.showArchived = { [p.id]: !!s.showArchived };
+  device.collapsed = { [p.id]: { archived: !s.showArchived } };
   persistDoc();
   persistDevice();
   try {
@@ -256,8 +272,18 @@ export function settings() {
     lastBackupAt: device.lastBackupAt,
     backupNagUntil: device.backupNagUntil,
     sort: p.sort,
-    showArchived: !!device.showArchived[p.id],
   };
+}
+
+/** Whether a Projects-tab section ('inactive' | 'archived') is folded. Archived starts folded. */
+export function isCollapsed(section) {
+  return device.collapsed[device.activeProfile]?.[section] ?? section === 'archived';
+}
+
+export function toggleSection(section) {
+  const mine = { ...device.collapsed[device.activeProfile], [section]: !isCollapsed(section) };
+  device.collapsed = { ...device.collapsed, [device.activeProfile]: mine };
+  commitDevice();
 }
 
 export function setSetting(key, value) {
@@ -265,8 +291,7 @@ export function setSetting(key, value) {
     Object.assign(activeProfile(), { sort: value, updatedAt: now() });
     return commitEdit();
   }
-  if (key === 'showArchived') device.showArchived = { ...device.showArchived, [device.activeProfile]: value };
-  else device[key] = value;
+  device[key] = value;
   commitDevice();
 }
 
@@ -301,20 +326,25 @@ export function index() {
   return indexCache;
 }
 
-/** Projects in display order for the given sort, archived ones optional. */
-export function orderedProjects({ sort = activeProfile().sort, includeArchived = false } = {}) {
-  const { byProject } = index();
-  const list = cur().projects.filter((p) => includeArchived || !p.archived);
-  const cmpName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-  if (sort === 'name') return list.sort(cmpName);
-  if (sort === 'manual') return list.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || a.createdAt.localeCompare(b.createdAt));
-  if (sort === 'created') return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return list.sort((a, b) => {
-    const la = byProject.get(a.id)?.last ?? '';
-    const lb = byProject.get(b.id)?.last ?? '';
-    if (la !== lb) return lb.localeCompare(la);
-    return b.createdAt.localeCompare(a.createdAt);
-  });
+/** Day of the project's latest update, or of its creation if it has none yet. */
+export function lastActivity(p) {
+  return index().byProject.get(p.id)?.last ?? toKey(new Date(p.createdAt));
+}
+
+/**
+ * Projects in display order: grouped by status (active, inactive, archived), each group sorted.
+ * statuses: which groups to include, or 'all'.
+ */
+export function orderedProjects({ sort = activeProfile().sort, statuses = ['active'] } = {}) {
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  const cmp = {
+    manual: (a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || a.createdAt.localeCompare(b.createdAt),
+    name: byName,
+    recent: (a, b) => lastActivity(b).localeCompare(lastActivity(a)) || byName(a, b),
+    idle: (a, b) => lastActivity(a).localeCompare(lastActivity(b)) || byName(a, b),
+  }[sort] ?? byName;
+  return (statuses === 'all' ? STATUSES : statuses)
+    .flatMap((st) => cur().projects.filter((p) => p.status === st).sort(cmp));
 }
 
 // ------------------------------------------------------------------ profiles
@@ -387,7 +417,7 @@ export function addProject({ name, color }) {
   const t = now();
   // New projects go to the top of the custom order.
   const order = Math.min(0, ...cur().projects.map((x) => x.order ?? 0)) - 1;
-  const p = shapeProject({ id: uid(), name: name.trim(), color: color || nextColor(), archived: false, order, createdAt: t, updatedAt: t });
+  const p = shapeProject({ id: uid(), name: name.trim(), color: color || nextColor(), status: 'active', order, createdAt: t, updatedAt: t });
   cur().projects.push(p);
   commitEdit();
   return p;
@@ -396,33 +426,37 @@ export function addProject({ name, color }) {
 export function updateProject(id, patch) {
   const p = getProject(id);
   if (!p) return;
-  Object.assign(p, patch, { updatedAt: now() }, patch.name != null ? { name: patch.name.trim() } : {});
+  Object.assign(p, patch, { updatedAt: now() },
+    patch.name != null ? { name: patch.name.trim() } : {},
+    patch.status ? { archived: patch.status === 'archived' } : {});
   commitEdit();
 }
 
-/** Where the project sits on the Projects tab right now: { index, total } (index -1 if hidden). */
+/** Where the project sits within its section of the Projects tab: { index, total, status }. */
 export function projectPosition(id) {
-  const list = orderedProjects({ includeArchived: settings().showArchived });
-  return { index: list.findIndex((p) => p.id === id), total: list.length };
+  const p = getProject(id);
+  const list = orderedProjects({ statuses: [p.status] });
+  return { index: list.indexOf(p), total: list.length, status: p.status };
 }
 
 /**
- * Moves a project 'top' | 'up' | 'down' | 'bottom' among the projects shown on the
- * Projects tab. If another sort is active, the custom order is first seeded from what
- * is on screen, so the move happens relative to what the user sees.
- * Returns { switched }: true when the sort was changed to custom order.
+ * Moves a project 'top' | 'up' | 'down' | 'bottom' within its section (active, inactive
+ * or archived). If another sort is active, 'My order' is first seeded from what is on
+ * screen, so the move happens relative to what the user sees.
+ * Returns { switched }: true when the sort was changed to 'My order'.
  */
 export function moveProject(id, where) {
   const profile = activeProfile();
+  const me = getProject(id);
   const t = now();
   const switched = profile.sort !== 'manual';
-  const all = orderedProjects({ includeArchived: true });
+  const all = orderedProjects({ statuses: 'all' });
   if (switched) Object.assign(profile, { sort: 'manual', updatedAt: t });
-  const visible = all.filter((p) => settings().showArchived || !p.archived || p.id === id);
-  const i = visible.findIndex((p) => p.id === id);
-  const target = { top: visible[0], up: visible[i - 1], down: visible[i + 1], bottom: visible[visible.length - 1] }[where];
-  if (i >= 0 && target && target.id !== id) {
-    const me = all.splice(all.findIndex((p) => p.id === id), 1)[0];
+  const group = all.filter((p) => p.status === me.status);
+  const i = group.indexOf(me);
+  const target = { top: group[0], up: group[i - 1], down: group[i + 1], bottom: group[group.length - 1] }[where];
+  if (target && target !== me) {
+    all.splice(all.indexOf(me), 1);
     const at = all.indexOf(target);
     all.splice(where === 'top' || where === 'up' ? at : at + 1, 0, me);
   }

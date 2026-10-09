@@ -6,8 +6,9 @@ import { cardLabel, ago, diffDays, gapLabel, todayKey } from '../dates.js';
 import { esc, plural } from '../ui.js';
 
 const MAX_CARDS = 60;
-const SORT_LABEL = { recent: 'Recent activity', name: 'Name', created: 'Newest project', manual: 'Custom order' };
+export const SORT_LABEL = { manual: 'My order', name: 'Name', recent: 'Recently active', idle: 'Longest idle' };
 const STALE_DAYS = 14;
+const SECTION_LABEL = { inactive: 'Inactive', archived: 'Archived' };
 
 export const title = 'Projects';
 
@@ -15,32 +16,45 @@ export function render() {
   const s = store.settings();
   const { byProject } = store.index();
   const all = store.getState().projects;
-  const archivedCount = all.filter((p) => p.archived).length;
-  const projects = store.orderedProjects({ includeArchived: s.showArchived });
   const today = todayKey();
 
   if (!all.length) return emptyState(store.profiles().length > 1 ? store.activeProfile().name : null);
 
+  const rows = (list) => list.map((p) => row(p, byProject.get(p.id), today)).join('');
+  const active = store.orderedProjects();
+  const section = (status) => {
+    const list = store.orderedProjects({ statuses: [status] });
+    if (!list.length) return '';
+    const folded = store.isCollapsed(status);
+    return `
+      <button class="tl-section ${folded ? 'is-folded' : ''}" data-action="toggle-section" data-section="${status}" aria-expanded="${!folded}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+        ${SECTION_LABEL[status]} · ${list.length}
+      </button>
+      ${folded ? '' : `<div class="tl">${rows(list)}</div>`}`;
+  };
+
   return `
     ${backupBanner()}
     <div class="toolbar">
-      <button class="chip" data-action="cycle-sort" aria-label="Change sort order">
+      <button class="chip" data-action="open-sort" aria-label="Sort: ${SORT_LABEL[s.sort]}. Change sort order">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4"/></svg>
         ${SORT_LABEL[s.sort]}
       </button>
-      ${archivedCount ? `<button class="chip ${s.showArchived ? 'is-on' : ''}" data-action="toggle-archived">Archived · ${archivedCount}</button>` : ''}
       <span class="spacer"></span>
       <button class="chip" data-action="new-project">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Project
       </button>
     </div>
     <div class="tl">
-      ${projects.map((p) => row(p, byProject.get(p.id), today)).join('')}
-    </div>`;
+      ${active.length ? rows(active) : '<p class="muted small tl-none">No active projects. Inactive and archived ones are below.</p>'}
+    </div>
+    ${section('inactive')}
+    ${section('archived')}`;
 }
 
 function row(p, info, today) {
-  const stale = info.last && diffDays(today, info.last) >= STALE_DAYS;
+  const stale = p.status === 'active' && info.last && diffDays(today, info.last) >= STALE_DAYS;
   const meta = info.last ? `${plural(info.count, 'update')} · ${ago(info.last, today)}` : 'No updates yet';
   const days = info.days.slice(0, MAX_CARDS);
 
@@ -57,10 +71,10 @@ function row(p, info, today) {
   }
 
   return `
-    <div class="tl-row ${p.archived ? 'is-archived' : ''}" style="--c:${esc(p.color)}">
+    <div class="tl-row is-${p.status}" style="--c:${esc(p.color)}">
       <button class="tl-name" data-action="open-project" data-id="${p.id}">
         <span class="tl-title">${esc(p.name)}</span>
-        <span class="tl-meta ${stale ? 'is-stale' : ''}">${p.archived ? 'Archived · ' : ''}${meta}</span>
+        <span class="tl-meta ${stale ? 'is-stale' : ''}">${meta}</span>
       </button>
       <div class="tl-strip">
         <button class="tl-add" data-action="add-update" data-project="${p.id}" aria-label="Log update for ${esc(p.name)}">

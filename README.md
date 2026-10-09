@@ -2,7 +2,9 @@
 
 A small installable web app (PWA) for tracking progress across many projects on an Android phone, iPad or any browser.
 
-- **Projects**: one row per project. The first column is the project; next to it is a horizontally scrolling timeline with one card per day that has updates, newest first. The small labels between cards show the gap ("3d", "2w"). Tap a project's name for its history and stats. That page can also move the project up, down, to the top or to the bottom, and archive or unarchive it.
+- **Projects**: one row per project. The first column is the project; next to it is a horizontally scrolling timeline with one card per day that has updates, newest first. The small labels between cards show the gap ("3d", "2w"). Tap a project's name for its history and stats. That page also sets the project's status and moves it up, down, to the top or to the bottom.
+  - **Status**: *Active* projects come first. *Inactive* ones (on hold) are listed in their own section below and never flagged as stale. *Archived* ones go in a folded section at the bottom. Logging an update works for all three.
+  - **Sort** (button at the top): *My order* (your arrangement), *Name*, *Recently active* or *Longest idle*. Each section is sorted the same way. A project with no updates counts from the day it was created.
 - **Daily**: what you got done each day, grouped by project, with search.
 - **Calendar**: a month heatmap with weekly totals, or a year view with 12 mini-months and a per-week chart. Each has a project × week (or month) table. "How much" means the number of updates. Use the dropdown, or tap a project in the table, to see a single project.
 - **Profiles**: separate sets of projects, for example one per job. Switch by tapping the profile name in the top bar.

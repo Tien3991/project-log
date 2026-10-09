@@ -16,11 +16,11 @@ export function updateForm({ id, projectId, date } = {}) {
   let day = existing?.date ?? date ?? todayKey();
 
   const chips = () => {
-    const list = store.orderedProjects({ sort: 'recent' });
+    const list = store.orderedProjects({ sort: 'recent', statuses: ['active', 'inactive'] });
     const cur = store.getProject(pid);
-    if (cur?.archived) list.unshift(cur);
+    if (cur?.status === 'archived') list.unshift(cur);
     return list.map((p) => `
-      <button type="button" class="pchip ${p.id === pid ? 'is-on' : ''}" style="--c:${esc(p.color)}" data-pid="${p.id}" aria-pressed="${p.id === pid}">
+      <button type="button" class="pchip ${p.id === pid ? 'is-on' : ''} ${p.status !== 'active' ? 'is-dim' : ''}" style="--c:${esc(p.color)}" data-pid="${p.id}" aria-pressed="${p.id === pid}">
         <span class="dot"></span>${esc(p.name)}
       </button>`).join('') +
       '<button type="button" class="pchip pchip-new" data-new-project>+ New project</button>';
@@ -134,6 +134,7 @@ export function projectForm({ id, onSaved } = {}) {
   const existing = id ? store.getProject(id) : null;
   if (id && !existing) return;
   let color = existing?.color ?? store.nextColor();
+  let status = existing?.status ?? 'active';
 
   openSheet({
     title: existing ? 'Edit project' : 'New project',
@@ -150,8 +151,9 @@ export function projectForm({ id, onSaved } = {}) {
         <p class="form-error" role="alert"></p>
         ${existing ? `
         <div class="field">
-          <button type="button" class="btn btn-block" data-archive>${existing.archived ? 'Unarchive project' : 'Archive project'}</button>
-          <p class="muted small">${existing.archived ? 'It will show on the Projects tab again.' : 'Hides it from the Projects tab; its history is kept.'}</p>
+          <span class="label">Status</span>
+          ${statusSeg(status, (st) => `data-status="${st}"`)}
+          <p class="muted small" data-status-hint>${STATUS_HINT[status]}</p>
         </div>` : ''}
         <div class="btn-row">
           ${existing ? '<button type="button" class="btn btn-danger-ghost" data-delete>Delete</button>' : ''}
@@ -179,7 +181,7 @@ export function projectForm({ id, onSaved } = {}) {
         if (clash) return void (err.textContent = 'You already have a project with that name.');
         sheet.close();
         if (existing) {
-          store.updateProject(id, { name, color });
+          store.updateProject(id, { name, color, status });
           toast('Project saved');
         } else {
           const p = store.addProject({ name, color });
@@ -187,15 +189,14 @@ export function projectForm({ id, onSaved } = {}) {
           onSaved?.(p);
         }
       });
-      b.querySelector('[data-archive]')?.addEventListener('click', () => {
-        sheet.close();
-        const archived = !existing.archived;
-        store.updateProject(id, { archived });
-        toast(archived ? `Archived “${existing.name}”` : `“${existing.name}” is back`, {
-          action: 'Undo',
-          onAction: () => store.updateProject(id, { archived: !archived }),
+      b.querySelectorAll('[data-status]').forEach((btn) => btn.addEventListener('click', () => {
+        status = btn.dataset.status;
+        b.querySelectorAll('[data-status]').forEach((x) => {
+          x.classList.toggle('is-on', x === btn);
+          x.setAttribute('aria-pressed', x === btn);
         });
-      });
+        b.querySelector('[data-status-hint]').textContent = STATUS_HINT[status];
+      }));
       b.querySelector('[data-delete]')?.addEventListener('click', async () => {
         const n = store.index().byProject.get(id)?.count ?? 0;
         const ok = await confirmSheet({
@@ -282,27 +283,62 @@ const MOVES = [
   ['bottom', 'Move to bottom', 'M6 20h12M12 4v11M7 11l5 5 5-5'],
 ];
 
-/** Reorder + archive controls for the project sheet. */
+const STATUS_LABEL = { active: 'Active', inactive: 'Inactive', archived: 'Archived' };
+const STATUS_HINT = {
+  active: 'Shown at the top of the Projects tab.',
+  inactive: 'On hold: listed in its own section below the active projects, and never flagged as stale.',
+  archived: 'Done or dropped: kept in the folded Archived section at the bottom. Its history stays.',
+};
+
+function statusSeg(current, attrs) {
+  return `<div class="seg seg-status" role="group" aria-label="Status">${store.STATUSES.map((st) =>
+    `<button type="button" class="${st === current ? 'is-on' : ''}" ${attrs(st)} aria-pressed="${st === current}">${STATUS_LABEL[st]}</button>`).join('')}</div>`;
+}
+
+/** Status and reorder controls for the project page. */
 function arrangeControls(p) {
-  const { index, total } = store.projectPosition(p.id);
-  const shown = index >= 0;
+  const { index, total, status } = store.projectPosition(p.id);
   const moves = MOVES.map(([where, label, path]) => {
     const disabled = where === 'top' || where === 'up' ? index === 0 : index === total - 1;
     return `<button class="move-btn" data-action="move-project" data-id="${p.id}" data-where="${where}" aria-label="${label}" title="${label}" ${disabled ? 'disabled' : ''}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg></button>`;
   }).join('');
-  const note = !shown
-    ? 'Archived — hidden from the Projects tab.'
-    : `${p.archived ? 'Archived · ' : ''}#${index + 1} of ${total} on the Projects tab${store.settings().sort === 'manual' ? '' : ' · moving it switches to custom order'}`;
   return `
-    <div class="arrange">
-      ${shown ? `<div class="move-group" role="group" aria-label="Position on the Projects tab">${moves}</div>` : ''}
-      <button class="btn btn-small ${p.archived ? 'btn-primary' : ''}" data-action="archive-project" data-id="${p.id}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 4.5h17v4h-17zM5 8.5V19.5h14V8.5M10 12.5h4"/></svg>
-        ${p.archived ? 'Unarchive' : 'Archive'}
-      </button>
-    </div>
-    <p class="muted small arrange-note">${note}</p>`;
+    <div class="proj-ctrl">
+      <div class="set-row"><span>Status</span>${statusSeg(p.status, (st) => `data-action="set-project-status" data-id="${p.id}" data-status="${st}"`)}</div>
+      <div class="set-row"><span>Position</span><div class="move-group" role="group" aria-label="Position">${moves}</div></div>
+      <p class="muted small">#${index + 1} of ${plural(total, `${status} project`)}${store.settings().sort === 'manual' ? '' : ' · moving it switches the Projects tab to My order'}</p>
+    </div>`;
+}
+
+// ------------------------------------------------------------------ sort menu
+
+const SORT_OPTIONS = [
+  ['manual', 'My order', 'Your own arrangement. Use the arrows on a project’s page to move it.'],
+  ['name', 'Name', 'Alphabetical, A to Z.'],
+  ['recent', 'Recently active', 'Most recently updated first.'],
+  ['idle', 'Longest idle', 'Longest time since the last update first.'],
+];
+
+export function sortSheet() {
+  const current = store.settings().sort;
+  const sheet = openSheet({
+    title: 'Sort projects',
+    className: 'sheet-compact',
+    body: () => `
+      <div class="choices" role="radiogroup" aria-label="Sort projects">
+        ${SORT_OPTIONS.map(([value, label, hint]) => `
+          <button class="choice ${value === current ? 'is-on' : ''}" data-sort="${value}" role="radio" aria-checked="${value === current}">
+            <span class="grow"><b>${label}</b><span class="muted small">${hint}</span></span>
+            ${value === current ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>' : ''}
+          </button>`).join('')}
+      </div>
+      <p class="muted small">Inactive and archived projects are sorted the same way within their own sections. A project with no updates yet counts from the day it was created.</p>`,
+    mount: (b) => b.querySelectorAll('[data-sort]').forEach((btn) => btn.addEventListener('click', () => {
+      sheet.close();
+      store.setSetting('sort', btn.dataset.sort);
+    })),
+  });
 }
 
 // ------------------------------------------------------------------ one project on one day
@@ -448,7 +484,7 @@ export function settingsSheet() {
       const profileCount = store.profiles().length;
       const cfg = store.syncConfig();
       const { byProject } = store.index();
-      const projects = store.orderedProjects({ sort: 'name', includeArchived: true });
+      const projects = store.orderedProjects({ sort: 'name', statuses: 'all' });
       const seg = (key, options) => `<div class="seg">${options.map(([v, label]) =>
         `<button class="${s[key] === v ? 'is-on' : ''}" data-setting="${key}" data-value="${v}" aria-pressed="${s[key] === v}">${label}</button>`).join('')}</div>`;
       const kb = Math.max(1, Math.round((localStorage.getItem(store.DOC_KEY)?.length ?? 0) / 1024));
@@ -469,7 +505,7 @@ export function settingsSheet() {
           ${projects.length ? `<ul class="plist">${projects.map((p) => `
             <li><button data-action="edit-project" data-id="${p.id}" style="--c:${esc(p.color)}">
               <span class="dot"></span><span class="grow">${esc(p.name)}</span>
-              <span class="muted small">${p.archived ? 'archived · ' : ''}${byProject.get(p.id)?.count ?? 0}</span>
+              <span class="muted small">${p.status === 'active' ? '' : `${p.status} · `}${byProject.get(p.id)?.count ?? 0}</span>
             </button></li>`).join('')}</ul>` : ''}
           <button class="btn btn-block" data-action="new-project">+ New project</button>
         </section>

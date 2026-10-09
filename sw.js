@@ -1,7 +1,7 @@
 // Offline support: every file the app needs is cached on install and served
 // cache-first. Bump VERSION whenever you change any file, so phones pick up the
 // new version (the cache name also shows as the version in Settings).
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const CACHE = `project-log-${VERSION}`;
 
 const ASSETS = [

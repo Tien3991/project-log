@@ -51,8 +51,6 @@ window.addEventListener('hashchange', route);
 
 // ------------------------------------------------------------------ actions
 
-const SORTS = ['recent', 'name', 'created', 'manual'];
-
 const actions = {
   'add-update': (el) => sheets.updateForm({ projectId: el.dataset.project, date: el.dataset.date }),
   'edit-update': (el) => sheets.updateForm({ id: el.dataset.id }),
@@ -64,25 +62,20 @@ const actions = {
   'open-settings': () => sheets.settingsSheet(),
   'open-profiles': () => sheets.profilesSheet(),
   'open-sync': () => sheets.syncSheet(),
-  'cycle-sort': () => {
-    const s = store.settings().sort;
-    store.setSetting('sort', SORTS[(SORTS.indexOf(s) + 1) % SORTS.length]);
-  },
+  'open-sort': () => sheets.sortSheet(),
+  'toggle-section': (el) => store.toggleSection(el.dataset.section),
   'move-project': (el) => {
     const { switched } = store.moveProject(el.dataset.id, el.dataset.where);
-    if (switched) toast('Projects tab now uses your custom order');
+    if (switched) toast('Projects tab now uses My order');
   },
-  'archive-project': (el) => {
+  'set-project-status': (el) => {
     const p = store.getProject(el.dataset.id);
-    if (!p) return;
-    const archived = !p.archived;
-    store.updateProject(p.id, { archived });
-    toast(archived ? `Archived “${p.name}”` : `“${p.name}” is back on the Projects tab`, {
-      action: 'Undo',
-      onAction: () => store.updateProject(p.id, { archived: !archived }),
-    });
+    const { status } = el.dataset;
+    if (!p || p.status === status) return;
+    const before = p.status;
+    store.updateProject(p.id, { status });
+    toast(`“${p.name}” is now ${status}`, { action: 'Undo', onAction: () => store.updateProject(p.id, { status: before }) });
   },
-  'toggle-archived': () => store.setSetting('showArchived', !store.settings().showArchived),
   'snooze-backup': () => store.setSetting('backupNagUntil', new Date(Date.now() + 7 * 864e5).toISOString()),
   'load-sample': () => {
     store.loadSample();

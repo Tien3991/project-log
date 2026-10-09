@@ -42,7 +42,7 @@ function perProject(from, to, nBuckets, bucketOf) {
 }
 
 export function render() {
-  const projects = store.orderedProjects({ includeArchived: true });
+  const projects = store.orderedProjects({ statuses: 'all' });
   if (!projects.length) {
     return `<div class="empty"><h2>Nothing to show yet</h2><p>Once you log updates, this shows how much you got done each week and month.</p></div>`;
   }
@@ -60,13 +60,21 @@ export function render() {
         <span class="dot"></span>
         <select data-input="cal-filter" aria-label="Project">
           <option value="all">All projects</option>
-          ${projects.map((p) => `<option value="${p.id}" ${p.id === filter ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+          ${projectOptions(projects)}
         </select>
       </label>
     </div>
     <div class="cal" style="--hc:${fp ? esc(fp.color) : 'var(--accent)'}">
       ${mode === 'month' ? monthView() : yearView()}
     </div>`;
+}
+
+/** Project choices, grouped by status when there is more than one kind. */
+function projectOptions(projects) {
+  const option = (p) => `<option value="${p.id}" ${p.id === filter ? 'selected' : ''}>${esc(p.name)}</option>`;
+  const groups = store.STATUSES.map((st) => [st, projects.filter((p) => p.status === st)]).filter(([, list]) => list.length);
+  if (groups.length < 2) return projects.map(option).join('');
+  return groups.map(([st, list]) => `<optgroup label="${st[0].toUpperCase()}${st.slice(1)}">${list.map(option).join('')}</optgroup>`).join('');
 }
 
 export function mount(root, rerender) {
