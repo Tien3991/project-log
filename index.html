@@ -9,18 +9,28 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-title" content="Project Log">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="stylesheet" href="css/app.css">
   <script>
     // Apply the saved theme before first paint to avoid a flash.
     try {
-      var t = JSON.parse(localStorage.getItem('project-log:v1') || '{}').settings?.theme;
+      var t = JSON.parse(localStorage.getItem('project-log:device') || '{}').theme
+        || JSON.parse(localStorage.getItem('project-log:v1') || '{}').settings?.theme;
       if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
 </head>
 <body>
   <header class="appbar">
-    <h1 id="view-title">Projects</h1>
+    <button class="profile-btn" data-action="open-profiles" aria-label="Switch profile">
+      <span class="dot"></span>
+      <h1 id="profile-name">My projects</h1>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+    </button>
+    <button class="icon-btn sync-btn" data-action="open-sync" id="sync-btn" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="cloud" d="M7 18.5a4.5 4.5 0 0 1-.6-8.96 6 6 0 0 1 11.6-1A4.25 4.25 0 0 1 17.5 18.5H7Z"/><path class="badge" d=""/></svg>
+    </button>
     <button class="icon-btn" data-action="open-settings" aria-label="Settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
     </button>

@@ -34,7 +34,8 @@ document.addEventListener('keydown', (e) => {
  *   title: string | () => string
  *   body:  () => html string, or null to close the sheet (e.g. its project was deleted)
  *   mount: (bodyEl, sheet) => void   — wire up form controls after each render
- *   live:  re-render whenever data changes (for read-only sheets; forms keep their input)
+ *   live:  re-render whenever data changes (for read-only sheets; forms keep their input).
+ *          May be a function, checked before each refresh.
  */
 export function openSheet({ title, body, mount, live = false, className = '' }) {
   const el = document.createElement('div');
@@ -50,7 +51,12 @@ export function openSheet({ title, body, mount, live = false, className = '' }) 
       </header>
       <div class="sheet-body"></div>
     </section>`;
-  const sheet = { el, title, body, mount, live, bodyEl: el.querySelector('.sheet-body'), close: () => closeSheet(sheet) };
+  const sheet = {
+    el, title, body, mount, live,
+    bodyEl: el.querySelector('.sheet-body'),
+    close: () => closeSheet(sheet),
+    refresh: () => stack.includes(sheet) && renderSheet(sheet),
+  };
   el.addEventListener('click', (e) => {
     if (e.target.closest('[data-sheet-close]')) sheet.close();
   });
@@ -78,7 +84,9 @@ function renderSheet(sheet) {
 }
 
 export function refreshSheets() {
-  for (const s of [...stack]) if (s.live && stack.includes(s)) renderSheet(s);
+  for (const s of [...stack]) {
+    if (stack.includes(s) && (typeof s.live === 'function' ? s.live() : s.live)) renderSheet(s);
+  }
 }
 
 export function closeSheet(sheet) {

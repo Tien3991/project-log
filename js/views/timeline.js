@@ -19,7 +19,7 @@ export function render() {
   const projects = store.orderedProjects({ includeArchived: s.showArchived });
   const today = todayKey();
 
-  if (!all.length) return emptyState();
+  if (!all.length) return emptyState(store.profiles().length > 1 ? store.activeProfile().name : null);
 
   return `
     ${backupBanner()}
@@ -83,7 +83,7 @@ function card(p, day, today) {
     </button>`;
 }
 
-function emptyState() {
+function emptyState(profileName) {
   return `
     <div class="empty">
       <svg viewBox="0 0 120 80" aria-hidden="true" class="empty-art">
@@ -91,9 +91,9 @@ function emptyState() {
         <rect x="4" y="34" width="30" height="12" rx="3"/><rect x="40" y="34" width="20" height="12" rx="3" class="b"/>
         <rect x="4" y="60" width="30" height="12" rx="3"/><rect x="40" y="60" width="20" height="12" rx="3" class="c"/><rect x="66" y="60" width="20" height="12" rx="3" class="c"/><rect x="92" y="60" width="20" height="12" rx="3" class="c"/>
       </svg>
-      <h2>Track all your projects in one place</h2>
+      <h2>${profileName ? `No projects in “${esc(profileName)}” yet` : 'Track all your projects in one place'}</h2>
       <p>Each project gets a row. Every day you log progress, a card appears on its timeline.</p>
-      <button class="btn btn-primary" data-action="new-project">Add your first project</button>
+      <button class="btn btn-primary" data-action="new-project">Add ${profileName ? 'a' : 'your first'} project</button>
       <button class="btn btn-ghost" data-action="load-sample">Try it with sample data</button>
     </div>`;
 }
@@ -102,7 +102,7 @@ function backupBanner() {
   const s = store.settings();
   const count = store.getState().updates.length;
   const now = Date.now();
-  if (count < 20) return '';
+  if (count < 20 || store.syncConfig()) return '';
   if (s.backupNagUntil && now < Date.parse(s.backupNagUntil)) return '';
   if (s.lastBackupAt && now - Date.parse(s.lastBackupAt) < 14 * 864e5) return '';
   return `

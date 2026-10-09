@@ -4,6 +4,7 @@ import * as store from './store.js';
 import { todayKey, toKey, addDays, cardLabel, fullDate, dayHeading, startOfWeek, diffDays } from './dates.js';
 import { openSheet, confirmSheet, toast, esc, plural } from './ui.js';
 import { dayBlock, swatches } from './components.js';
+import * as sync from './sync.js';
 
 // ------------------------------------------------------------------ log / edit an update
 
@@ -394,24 +395,47 @@ async function shareBackup() {
   }
 }
 
-function importSheet(data) {
+function importSheet(backup) {
+  const profile = store.activeProfile();
+  const all = backup.kind === 'all';
   const s = openSheet({
     title: 'Restore backup',
     className: 'sheet-compact',
     body: () => `
-      <p class="confirm-msg">This backup has ${plural(data.projects.length, 'project')} and ${plural(data.updates.length, 'update')}.</p>
+      <p class="confirm-msg">${all
+        ? `This backup has ${plural(backup.profiles, 'profile')}, ${plural(backup.projects, 'project')} and ${plural(backup.updates, 'update')}.`
+        : `This backup has ${plural(backup.projects.length, 'project')} and ${plural(backup.updates.length, 'update')}. They’ll go into the “${esc(profile.name)}” profile.`}</p>
       <div class="btn-col">
         <button class="btn btn-primary" data-mode="merge">Merge with what's here</button>
-        <button class="btn btn-danger-ghost" data-mode="replace">Replace everything on this phone</button>
+        <button class="btn btn-danger-ghost" data-mode="replace">${all ? 'Replace all profiles with the backup' : `Replace everything in “${esc(profile.name)}”`}</button>
       </div>
-      <p class="muted small">Merge keeps your current entries and adds any from the backup that aren't here yet.</p>`,
+      <p class="muted small">Merge keeps everything here and adds anything from the backup that's missing.${store.syncConfig() ? ' The result syncs to your other devices.' : ''}</p>`,
     mount: (b) => b.querySelectorAll('[data-mode]').forEach((btn) => btn.addEventListener('click', () => {
-      store.importBackup(data, btn.dataset.mode);
+      store.importBackup(backup, btn.dataset.mode);
       s.close();
       toast(btn.dataset.mode === 'merge' ? 'Backup merged' : 'Backup restored');
     })),
   });
 }
+
+/** "just now", "5 min ago", "3 h ago", or a date. */
+function since(iso) {
+  if (!iso) return 'never';
+  const sec = (Date.now() - Date.parse(iso)) / 1000;
+  if (sec < 45) return 'just now';
+  if (sec < 3600) return `${Math.round(sec / 60)} min ago`;
+  if (sec < 86400) return `${Math.round(sec / 3600)} h ago`;
+  return cardLabel(toKey(new Date(iso)));
+}
+
+const SYNC_LABEL = {
+  off: 'Off',
+  synced: 'Up to date',
+  pending: 'Changes waiting to sync',
+  syncing: 'Syncing…',
+  offline: 'Offline: will sync when you’re back online',
+  error: 'Sync problem',
+};
 
 export function settingsSheet() {
   openSheet({
@@ -420,22 +444,44 @@ export function settingsSheet() {
     body: () => {
       const s = store.settings();
       const st = store.getState();
+      const profile = store.activeProfile();
+      const profileCount = store.profiles().length;
+      const cfg = store.syncConfig();
       const { byProject } = store.index();
       const projects = store.orderedProjects({ sort: 'name', includeArchived: true });
       const seg = (key, options) => `<div class="seg">${options.map(([v, label]) =>
         `<button class="${s[key] === v ? 'is-on' : ''}" data-setting="${key}" data-value="${v}" aria-pressed="${s[key] === v}">${label}</button>`).join('')}</div>`;
-      const kb = Math.max(1, Math.round((localStorage.getItem(store.STORAGE_KEY)?.length ?? 0) / 1024));
+      const kb = Math.max(1, Math.round((localStorage.getItem(store.DOC_KEY)?.length ?? 0) / 1024));
       const lastBackup = s.lastBackupAt ? cardLabel(toKey(new Date(s.lastBackupAt))) : 'never';
 
       return `
         <section class="set">
-          <h3 class="section-h">Projects</h3>
+          <h3 class="section-h">Profile</h3>
+          <button class="row-btn" data-action="open-profiles" style="--c:${esc(profile.color)}">
+            <span class="dot"></span>
+            <span class="grow"><b>${esc(profile.name)}</b><span class="muted small">${profileCount > 1 ? `${profileCount} profiles · tap to switch or manage` : 'Add profiles to keep separate jobs apart'}</span></span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </section>
+
+        <section class="set">
+          <h3 class="section-h">Projects in “${esc(profile.name)}”</h3>
           ${projects.length ? `<ul class="plist">${projects.map((p) => `
             <li><button data-action="edit-project" data-id="${p.id}" style="--c:${esc(p.color)}">
               <span class="dot"></span><span class="grow">${esc(p.name)}</span>
               <span class="muted small">${p.archived ? 'archived · ' : ''}${byProject.get(p.id)?.count ?? 0}</span>
             </button></li>`).join('')}</ul>` : ''}
           <button class="btn btn-block" data-action="new-project">+ New project</button>
+        </section>
+
+        <section class="set">
+          <h3 class="section-h">Sync</h3>
+          <button class="row-btn" data-action="open-sync">
+            <span class="grow"><b>${cfg ? SYNC_LABEL[sync.getState()] : 'Off'}</b><span class="muted small">${cfg
+              ? `${esc(cfg.repo)} · last synced ${since(cfg.lastSyncAt)}`
+              : 'Keep your phone, iPad and other devices in step'}</span></span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
         </section>
 
         <section class="set">
@@ -446,7 +492,10 @@ export function settingsSheet() {
 
         <section class="set">
           <h3 class="section-h">Backup</h3>
-          <p class="muted small">Everything is stored on this phone only. Back up now and then, so a cleared browser or a new phone doesn't lose your history. Last backup: <b>${lastBackup}</b>.</p>
+          <p class="muted small">${cfg
+            ? 'Sync keeps every version on GitHub. A backup file is an extra copy you hold yourself.'
+            : 'Everything is stored on this device only. Back up now and then, so a cleared browser or a new phone doesn’t lose your history.'}
+            Backups include all profiles. Last backup: <b>${lastBackup}</b>.</p>
           <div class="btn-col">
             ${backupFile() ? '<button class="btn" data-set="share">Share backup to Drive, email…</button>' : ''}
             <button class="btn" data-set="download">Download backup file</button>
@@ -462,8 +511,10 @@ export function settingsSheet() {
 
         <section class="set">
           <h3 class="section-h">Data</h3>
-          <p class="muted small">${plural(st.projects.length, 'project')} · ${plural(st.updates.length, 'update')} · ${kb} KB</p>
-          ${st.projects.length ? '<button class="btn btn-danger-ghost" data-set="erase">Erase all data</button>' : '<button class="btn" data-action="load-sample">Load sample data</button>'}
+          <p class="muted small">“${esc(profile.name)}”: ${plural(st.projects.length, 'project')} · ${plural(st.updates.length, 'update')}. All profiles: ${kb} KB.</p>
+          ${st.projects.length
+            ? `<button class="btn btn-danger-ghost" data-set="erase">Erase “${esc(profile.name)}” data</button>`
+            : '<button class="btn" data-action="load-sample">Load sample data</button>'}
         </section>
 
         <p class="muted small center" data-version>Project Log</p>`;
@@ -492,21 +543,244 @@ export function settingsSheet() {
         }
       });
       b.querySelector('[data-set="erase"]')?.addEventListener('click', async () => {
+        const name = store.activeProfile().name;
         const ok = await confirmSheet({
-          title: 'Erase all data?',
-          message: 'All projects and updates on this phone will be deleted. Download a backup first if you might want them back.',
-          confirm: 'Erase everything',
+          title: `Erase “${name}”?`,
+          message: `All projects and updates in this profile will be deleted${store.syncConfig() ? ', on every synced device' : ''}. Other profiles are not affected.`,
+          confirm: 'Erase',
           danger: true,
         });
         if (!ok) return;
-        const snapshot = JSON.parse(store.exportJSON());
-        store.eraseAll();
-        toast('All data erased', { action: 'Undo', onAction: () => store.importBackup(snapshot, 'replace'), duration: 10000 });
+        const snapshot = store.eraseProfileData();
+        toast(`Erased “${name}”`, { action: 'Undo', onAction: () => store.restoreProfileData(snapshot), duration: 10000 });
       });
       // The service worker's cache name carries the app version.
       globalThis.caches?.keys().then((keys) => {
         const v = keys.find((k) => k.startsWith('project-log-'))?.slice('project-log-'.length);
         if (v) b.querySelector('[data-version]').textContent = `Project Log ${v}`;
+      });
+    },
+  });
+}
+
+// ------------------------------------------------------------------ profiles
+
+export function profilesSheet() {
+  openSheet({
+    live: true,
+    title: 'Profiles',
+    body: () => {
+      const active = store.activeProfile().id;
+      return `
+        <p class="sheet-sub">Each profile has its own projects and history, for example one per job.</p>
+        <ul class="profiles">
+          ${store.profiles().map((p) => {
+            const n = store.profileStats(p.id);
+            return `
+              <li class="${p.id === active ? 'is-on' : ''}" style="--c:${esc(p.color)}">
+                <button class="prof-main" data-switch="${p.id}" ${p.id === active ? 'aria-current="true"' : ''}>
+                  <span class="prof-dot"></span>
+                  <span class="grow"><b>${esc(p.name)}</b><span class="muted small">${plural(n.projects, 'project')} · ${plural(n.updates, 'update')}</span></span>
+                  ${p.id === active ? '<svg viewBox="0 0 24 24" aria-hidden="true" class="check"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>' : ''}
+                </button>
+                <button class="icon-btn" data-edit-profile="${p.id}" aria-label="Edit ${esc(p.name)}">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4ZM13.5 6.5l4 4"/></svg>
+                </button>
+              </li>`;
+          }).join('')}
+        </ul>
+        <button class="btn btn-block" data-new-profile>+ New profile</button>`;
+    },
+    mount: (b, sheet) => {
+      b.querySelectorAll('[data-switch]').forEach((btn) => btn.addEventListener('click', () => {
+        sheet.close();
+        if (btn.dataset.switch === store.activeProfile().id) return;
+        store.switchProfile(btn.dataset.switch);
+        toast(`Switched to “${store.activeProfile().name}”`);
+      }));
+      b.querySelectorAll('[data-edit-profile]').forEach((btn) =>
+        btn.addEventListener('click', () => profileForm({ id: btn.dataset.editProfile })));
+      b.querySelector('[data-new-profile]').addEventListener('click', () => profileForm({
+        onSaved: (p) => {
+          sheet.close();
+          store.switchProfile(p.id);
+        },
+      }));
+    },
+  });
+}
+
+export function profileForm({ id, onSaved } = {}) {
+  const existing = id ? store.getProfile(id) : null;
+  if (id && !existing) return;
+  let color = existing?.color ?? store.nextProfileColor();
+
+  openSheet({
+    title: existing ? 'Edit profile' : 'New profile',
+    body: () => `
+      <form class="form" novalidate>
+        <label class="field">
+          <span class="label">Name</span>
+          <input type="text" class="text-input" value="${esc(existing?.name ?? '')}" placeholder="e.g. Day job, Freelance, Personal" maxlength="60" autocomplete="off" enterkeyhint="done">
+        </label>
+        <div class="field">
+          <span class="label">Colour</span>
+          ${swatches(color)}
+        </div>
+        <p class="form-error" role="alert"></p>
+        <div class="btn-row">
+          ${existing && store.profiles().length > 1 ? '<button type="button" class="btn btn-danger-ghost" data-delete>Delete</button>' : ''}
+          <span class="spacer"></span>
+          <button type="submit" class="btn btn-primary">${existing ? 'Save' : 'Create profile'}</button>
+        </div>
+      </form>`,
+    mount: (b, sheet) => {
+      const input = b.querySelector('.text-input');
+      const err = b.querySelector('.form-error');
+      b.querySelector('.swatches').addEventListener('click', (e) => {
+        const sw = e.target.closest('[data-color]');
+        if (!sw) return;
+        color = sw.dataset.color;
+        b.querySelectorAll('[data-color]').forEach((x) => {
+          x.classList.toggle('is-on', x === sw);
+          x.setAttribute('aria-checked', x === sw);
+        });
+      });
+      b.querySelector('form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = input.value.trim();
+        if (!name) return void (err.textContent = 'Give the profile a name.', input.focus());
+        if (store.profiles().some((p) => p.id !== id && p.name.toLowerCase() === name.toLowerCase())) {
+          return void (err.textContent = 'You already have a profile with that name.');
+        }
+        sheet.close();
+        if (existing) {
+          store.updateProfile(id, { name, color });
+          toast('Profile saved');
+        } else {
+          const p = store.addProfile({ name, color });
+          toast(`Created “${p.name}”`);
+          onSaved?.(p);
+        }
+      });
+      b.querySelector('[data-delete]')?.addEventListener('click', async () => {
+        const n = store.profileStats(id);
+        const ok = await confirmSheet({
+          title: 'Delete profile?',
+          message: `“${existing.name}” and its ${plural(n.projects, 'project')} and ${plural(n.updates, 'update')} will be deleted${store.syncConfig() ? ' on every synced device' : ''}.`,
+          confirm: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
+        sheet.close();
+        const removed = store.deleteProfile(id);
+        if (removed) toast(`Deleted “${existing.name}”`, { action: 'Undo', onAction: () => store.restoreProfile(removed), duration: 8000 });
+      });
+      if (!existing) requestAnimationFrame(() => input.focus());
+    },
+  });
+}
+
+// ------------------------------------------------------------------ sync
+
+/** On github.io the owner is in the hostname, so the repository can be suggested. */
+function suggestedRepo() {
+  const m = location.hostname.match(/^([\w-]+)\.github\.io$/i);
+  return m ? `${m[1]}/project-log-data` : '';
+}
+
+export function syncSheet() {
+  let editing = !store.syncConfig();
+
+  const form = (cfg) => `
+    <p class="muted">Keep this log the same on your phone, iPad and other devices. It is saved as a file in a
+      <b>private GitHub repository</b> that you own. GitHub keeps every version, so it also works as a backup history.</p>
+    <ol class="steps">
+      <li>Create a private repository, for example <b>project-log-data</b>, at
+        <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a>. Make sure <i>Private</i> is selected.</li>
+      <li>Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained access token</a>.
+        Under <i>Repository access</i>, pick <i>Only select repositories</i> and choose your data repository. Under
+        <i>Permissions → Repository permissions</i>, set <i>Contents</i> to <i>Read and write</i>.</li>
+      <li>Enter both below. Repeat on each device, using the same repository.</li>
+    </ol>
+    <form class="form" novalidate>
+      <label class="field">
+        <span class="label">Repository</span>
+        <input class="text-input" name="repo" value="${esc(cfg?.repo ?? suggestedRepo())}" placeholder="owner/project-log-data"
+          autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="label">Access token</span>
+        <input class="text-input" name="token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="btn-row">
+        ${cfg ? '<button type="button" class="btn" data-cancel>Cancel</button>' : ''}
+        <span class="spacer"></span>
+        <button type="submit" class="btn btn-primary">Connect</button>
+      </div>
+      <p class="muted small">The token is stored only on this device. Whatever is already here is merged with the copy on GitHub, so nothing is overwritten.</p>
+    </form>`;
+
+  const status = (cfg) => {
+    const state = sync.getState();
+    return `
+      <div class="sync-status is-${state}">
+        <b>${SYNC_LABEL[state]}</b>
+        <span class="muted small">Last synced ${since(cfg.lastSyncAt)}</span>
+      </div>
+      ${state === 'error' && cfg.lastError ? `<p class="form-error">${esc(cfg.lastError)}</p>` : ''}
+      <div class="set-row"><span>Repository</span><a href="https://github.com/${esc(cfg.repo)}" target="_blank" rel="noopener">${esc(cfg.repo)}</a></div>
+      <div class="btn-col">
+        <button class="btn btn-primary" data-sync-now ${state === 'syncing' ? 'disabled' : ''}>Sync now</button>
+        <a class="btn" href="https://github.com/${esc(cfg.repo)}/commits" target="_blank" rel="noopener">Version history on GitHub</a>
+        <button class="btn" data-edit>Change repository or token</button>
+        <button class="btn btn-danger-ghost" data-disconnect>Turn off sync on this device</button>
+      </div>
+      <p class="muted small">Turning sync off keeps everything on this device and leaves the copy on GitHub as it is.</p>`;
+  };
+
+  const sheet = openSheet({
+    title: 'Sync',
+    live: () => !editing,     // don't wipe what's being typed
+    body: () => {
+      const cfg = store.syncConfig();
+      return editing || !cfg ? form(cfg) : status(cfg);
+    },
+    mount: (b) => {
+      b.querySelector('[data-sync-now]')?.addEventListener('click', () => sync.syncNow());
+      b.querySelector('[data-edit]')?.addEventListener('click', () => {
+        editing = true;
+        sheet.refresh();
+      });
+      b.querySelector('[data-cancel]')?.addEventListener('click', () => {
+        editing = false;
+        sheet.refresh();
+      });
+      b.querySelector('[data-disconnect]')?.addEventListener('click', () => {
+        sync.disconnect();
+        editing = true;
+        sheet.refresh();
+        toast('Sync is off on this device');
+      });
+      const formEl = b.querySelector('form');
+      formEl?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = formEl.querySelector('[type="submit"]');
+        const err = formEl.querySelector('.form-error');
+        err.textContent = '';
+        btn.disabled = true;
+        btn.textContent = 'Connecting…';
+        try {
+          await sync.connect({ repo: formEl.repo.value, token: formEl.token.value });
+          editing = false;
+          sheet.refresh();
+          toast('Sync is on');
+        } catch (ex) {
+          err.textContent = ex.message;
+          btn.disabled = false;
+          btn.textContent = 'Connect';
+        }
       });
     },
   });

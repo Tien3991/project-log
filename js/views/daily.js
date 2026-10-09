@@ -38,6 +38,12 @@ export function mount(root) {
   });
 }
 
+/** Clears the search, e.g. after switching profile. */
+export function reset() {
+  query = '';
+  limit = PAGE;
+}
+
 export const actions = {
   'daily-more': () => { limit += PAGE; },
 };
