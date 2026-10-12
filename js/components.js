@@ -19,7 +19,7 @@ export function entryItem(u, query = '') {
   return `<li class="${u.kind === 'note' ? 'is-note' : ''}"><button data-action="edit-update" data-id="${u.id}">${tag}${t ? `<time>${t}</time>` : ''}<span class="entry-text">${highlight(u.text, query)}</span></button></li>`;
 }
 
-/** Groups a day's updates by project; busiest project first. */
+/** Groups a day's entries by project, keeping their order; project with most logs first. */
 export function groupByProject(updates) {
   const groups = new Map();
   for (const u of updates) {
@@ -28,16 +28,19 @@ export function groupByProject(updates) {
     if (!groups.has(p.id)) groups.set(p.id, { project: p, items: [] });
     groups.get(p.id).items.push(u);
   }
+  const logs = (g) => g.items.filter((u) => u.kind !== 'note').length;
   return [...groups.values()].sort((a, b) =>
-    b.items.length - a.items.length || a.project.name.localeCompare(b.project.name));
+    logs(b) - logs(a) || b.items.length - a.items.length || a.project.name.localeCompare(b.project.name));
 }
 
-/** One day: heading, then each project with its updates. */
+/** One day: heading, then each project with its entries (pass notes before logs to list them first). */
 export function dayBlock(date, updates, { query = '', heading = true, today = todayKey() } = {}) {
   const groups = groupByProject(updates);
   const { title, sub } = dayHeading(date, today);
+  const notes = updates.filter((u) => u.kind === 'note').length;
+  const logs = updates.length - notes;
   const summary = updates.length
-    ? `${plural(updates.length, 'update')} · ${plural(groups.length, 'project')}`
+    ? [logs && plural(logs, 'log'), notes && plural(notes, 'note'), plural(groups.length, 'project')].filter(Boolean).join(' · ')
     : 'Nothing logged yet';
   return `
     <section class="day" data-date="${date}">

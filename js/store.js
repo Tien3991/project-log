@@ -317,6 +317,7 @@ export function timeOf(u) {
  *   dates:          date[]
  *   byProject:      Map<projectId, { days: [{ date, items }], count, last, first }>
  *   notesByProject: Map<projectId, Map<date, Note[]>>
+ *   notesByDate:    Map<date, Note[]>
  */
 export function index() {
   if (indexCache?.rev === rev) return indexCache;
@@ -329,12 +330,15 @@ export function index() {
   const byDate = new Map();
   const byProject = new Map(projects.map((p) => [p.id, { days: [], count: 0, last: null, first: null }]));
   const notesByProject = new Map(projects.map((p) => [p.id, new Map()]));
+  const notesByDate = new Map();
   for (const u of sorted) {
     if (u.kind === 'note') {
       const notes = notesByProject.get(u.projectId);
       if (!notes) continue;
       if (!notes.has(u.date)) notes.set(u.date, []);
       notes.get(u.date).push(u);
+      if (!notesByDate.has(u.date)) notesByDate.set(u.date, []);
+      notesByDate.get(u.date).push(u);
       continue;
     }
     if (!byDate.has(u.date)) byDate.set(u.date, []);
@@ -349,8 +353,15 @@ export function index() {
     p.last ??= u.date;
     p.first = u.date;
   }
-  indexCache = { rev, byDate, dates: [...byDate.keys()], byProject, notesByProject };
+  indexCache = { rev, byDate, dates: [...byDate.keys()], byProject, notesByProject, notesByDate };
   return indexCache;
+}
+
+/** Every day with logs or notes, newest first: [{ date, notes, logs }]. Used by the Daily view. */
+export function allDays() {
+  const { byDate, notesByDate } = index();
+  return [...new Set([...byDate.keys(), ...notesByDate.keys()])].sort().reverse()
+    .map((date) => ({ date, notes: notesByDate.get(date) ?? [], logs: byDate.get(date) ?? [] }));
 }
 
 /** A project's days that have logs or notes, newest first: [{ date, notes, logs }]. */

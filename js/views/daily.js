@@ -1,4 +1,4 @@
-// Daily view: newest day first, each day listing what was done per project.
+// Daily view: newest day first, each day listing per project its notes, then its logs.
 
 import * as store from '../store.js';
 import { todayKey } from '../dates.js';
@@ -19,7 +19,7 @@ export function render() {
     <div class="toolbar">
       <label class="search">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
-        <input type="search" placeholder="Search updates" value="${esc(query)}" data-input="daily-search" enterkeyhint="search">
+        <input type="search" placeholder="Search logs and notes" value="${esc(query)}" data-input="daily-search" enterkeyhint="search">
       </label>
     </div>
     <div id="daily-list">${list()}</div>`;
@@ -50,25 +50,24 @@ export const actions = {
 };
 
 function list() {
-  const { byDate, dates } = store.index();
+  const days = store.allDays().map((d) => [d.date, [...d.notes, ...d.logs]]);
   const today = todayKey();
   const q = query.toLowerCase();
 
   if (q) {
     const matches = [];
-    for (const date of dates) {
-      const hits = byDate.get(date).filter((u) =>
+    for (const [date, entries] of days) {
+      const hits = entries.filter((u) =>
         u.text.toLowerCase().includes(q) || store.getProject(u.projectId)?.name.toLowerCase().includes(q));
       if (hits.length) matches.push([date, hits]);
     }
-    if (!matches.length) return `<p class="muted pad">No updates match “${esc(query)}”.</p>`;
+    if (!matches.length) return `<p class="muted pad">Nothing matches “${esc(query)}”.</p>`;
     const total = matches.reduce((n, [, h]) => n + h.length, 0);
     return `<p class="muted pad-x">${plural(total, 'match', 'matches')} on ${plural(matches.length, 'day')}</p>` +
       page(matches, today);
   }
 
-  const days = dates.map((d) => [d, byDate.get(d)]);
-  if (!byDate.has(today)) days.unshift([today, []]);
+  if (!days.some(([date]) => date === today)) days.unshift([today, []]);
   return page(days, today);
 }
 

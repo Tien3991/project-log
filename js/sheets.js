@@ -425,7 +425,7 @@ export function daySheet(date) {
       const items = store.index().byDate.get(date) ?? [];
       const { title, sub } = dayHeading(date);
       return `
-        <p class="sheet-sub">${title === sub ? '' : `${esc(sub)} · `}${items.length ? plural(items.length, 'update') : 'Nothing logged'}</p>
+        <p class="sheet-sub">${title === sub ? '' : `${esc(sub)} · `}${items.length ? plural(items.length, 'log') : 'Nothing logged'}</p>
         ${items.length ? dayBlock(date, items, { heading: false }) : ''}
         <div class="btn-row">
           <span class="spacer"></span>
