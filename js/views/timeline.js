@@ -57,6 +57,7 @@ function row(p, info, today) {
   const stale = p.status === 'active' && info.last && diffDays(today, info.last) >= STALE_DAYS;
   const meta = info.last ? `${plural(info.count, 'update')} · ${ago(info.last, today)}` : 'No updates yet';
   const days = info.days.slice(0, MAX_CARDS);
+  const notes = store.index().notesByProject.get(p.id);
 
   let cards = '';
   days.forEach((d, i) => {
@@ -64,7 +65,7 @@ function row(p, info, today) {
       const gap = diffDays(days[i - 1].date, d.date);
       cards += gap > 1 ? `<span class="tl-gap" title="${gap} days between updates">${gapLabel(gap)}</span>` : '<span class="tl-gap tl-gap-0"></span>';
     }
-    cards += card(p, d, today);
+    cards += card(p, d, today, notes?.get(d.date)?.length ?? 0);
   });
   if (info.days.length > MAX_CARDS) {
     cards += `<button class="tl-more" data-action="open-project" data-id="${p.id}">All ${info.days.length} days →</button>`;
@@ -85,14 +86,14 @@ function row(p, info, today) {
     </div>`;
 }
 
-function card(p, day, today) {
+function card(p, day, today, noteCount) {
   const n = day.items.length;
   const body = n === 1
     ? esc(day.items[0].text)
     : day.items.map((u) => `• ${esc(u.text)}`).join('\n');
   return `
     <button class="tl-card ${day.date === today ? 'is-today' : ''}" data-action="open-project-day" data-project="${p.id}" data-date="${day.date}">
-      <span class="tl-date">${cardLabel(day.date, today)}${n > 1 ? `<b>${n}</b>` : ''}</span>
+      <span class="tl-date">${cardLabel(day.date, today)}${n > 1 ? `<b>${n}</b>` : ''}${noteCount ? `<i class="tl-note" title="${plural(noteCount, 'note')} that day"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.5L19 8v12.5H6zM9.5 12h6M9.5 16h4"/></svg></i>` : ''}</span>
       <span class="tl-text">${body}</span>
     </button>`;
 }

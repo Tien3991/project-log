@@ -30,11 +30,11 @@ function counter() {
   };
 }
 
-/** Per-project counts in [from, to], bucketed: Map<projectId, number[]>. */
+/** Per-project log counts in [from, to], bucketed: Map<projectId, number[]>. Notes don't count. */
 function perProject(from, to, nBuckets, bucketOf) {
   const out = new Map();
   for (const u of store.getState().updates) {
-    if (u.date < from || u.date > to) continue;
+    if (u.kind === 'note' || u.date < from || u.date > to) continue;
     if (!out.has(u.projectId)) out.set(u.projectId, new Array(nBuckets).fill(0));
     out.get(u.projectId)[bucketOf(u.date)]++;
   }

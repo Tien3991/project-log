@@ -27,6 +27,7 @@ export function render() {
 
 export function mount(root) {
   const input = root.querySelector('[data-input="daily-search"]');
+  if (!input) return;   // empty state: nothing to search yet
   let t;
   input.addEventListener('input', () => {
     clearTimeout(t);

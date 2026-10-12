@@ -12,6 +12,13 @@ export function highlight(text, query) {
   return safe.replace(new RegExp(q, 'gi'), (m) => `<mark>${m}</mark>`);
 }
 
+/** One log or note as a tappable list item: time, then text. Notes are marked. */
+export function entryItem(u, query = '') {
+  const t = store.timeOf(u);
+  const tag = u.kind === 'note' ? '<span class="note-tag">Note</span>' : '';
+  return `<li class="${u.kind === 'note' ? 'is-note' : ''}"><button data-action="edit-update" data-id="${u.id}">${tag}${t ? `<time>${t}</time>` : ''}<span class="entry-text">${highlight(u.text, query)}</span></button></li>`;
+}
+
 /** Groups a day's updates by project; busiest project first. */
 export function groupByProject(updates) {
   const groups = new Map();
@@ -48,7 +55,7 @@ export function dayBlock(date, updates, { query = '', heading = true, today = to
         <div class="day-proj" style="--c:${esc(g.project.color)}">
           <button class="day-pname" data-action="open-project" data-id="${g.project.id}">${highlight(g.project.name, query)}</button>
           <ul class="day-items">
-            ${g.items.map((u) => `<li><button data-action="edit-update" data-id="${u.id}">${highlight(u.text, query)}</button></li>`).join('')}
+            ${g.items.map((u) => entryItem(u, query)).join('')}
           </ul>
         </div>`).join('')}
     </section>`;

@@ -2,13 +2,14 @@
 //
 // Synced document: the same shape is stored locally and in the sync repository.
 //   { format: 2,
-//     profiles:        [{ id, name, color, sort, createdAt, updatedAt }],
+//     profiles:        [{ id, name, color, sort, order, createdAt, updatedAt }],
 //     deletedProfiles: { [profileId]: deletedAt },
 //     data: { [profileId]: { projects: [...], updates: [...], deleted: { [id]: deletedAt } } } }
 //   project: { id, name, color, status, archived, order, createdAt, updatedAt }
 //            status: active | inactive | archived ('archived' is kept for older app versions)
 //            order:  position in 'My order'
-//   update:  { id, projectId, date: 'YYYY-MM-DD', text, createdAt, updatedAt }
+//   update:  { id, projectId, kind, date: 'YYYY-MM-DD', time: 'HH:MM' | null, text, createdAt, updatedAt }
+//            kind: 'log' (counts as progress) | 'note' (a remark; shown only on the project's page)
 //
 // Device state is never synced: active profile, theme, week start, sync credentials, …
 //
@@ -72,8 +73,11 @@ function withExtras(known, raw) {
 const sortOf = (p) => (SORTS.includes(p.sort) ? p.sort : 'recent');   // retired 'created' → 'recent'
 const statusOf = (p) => (STATUSES.includes(p.status) ? p.status : p.archived ? 'archived' : 'active');
 
+const isTime = (t) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+
 const shapeProfile = (p) => withExtras({
   id: p.id, name: p.name, color: str(p.color, PALETTE[0]), sort: sortOf(p),
+  order: Number.isFinite(p.order) ? p.order : null,
   createdAt: str(p.createdAt, EPOCH), updatedAt: str(p.updatedAt, str(p.createdAt, EPOCH)),
 }, p);
 const shapeProject = (p) => {
@@ -85,7 +89,8 @@ const shapeProject = (p) => {
   }, p);
 };
 const shapeUpdate = (u) => withExtras({
-  id: u.id, projectId: u.projectId, date: u.date, text: u.text,
+  id: u.id, projectId: u.projectId, kind: u.kind === 'note' ? 'note' : 'log',
+  date: u.date, time: isTime(u.time) ? u.time : null, text: u.text,
   createdAt: str(u.createdAt, EPOCH), updatedAt: str(u.updatedAt, str(u.createdAt, EPOCH)),
 }, u);
 
@@ -295,21 +300,43 @@ export function setSetting(key, value) {
   commitDevice();
 }
 
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/** An entry's 'HH:MM': its own time, or for older entries the creation time if that was the same day. */
+export function timeOf(u) {
+  if (u.time) return u.time;
+  const c = new Date(u.createdAt);
+  return toKey(c) === u.date ? `${pad2(c.getHours())}:${pad2(c.getMinutes())}` : null;
+}
+
 /**
- * Derived lookups for the active profile, rebuilt only when data changes.
- *   byDate:    Map<date, Update[]>             (updates oldest-first within a day)
- *   dates:     date[]                          (newest first)
- *   byProject: Map<projectId, { days: [{ date, items }], count, last, first }>
+ * Derived lookups for the active profile, rebuilt only when data changes. Only logs
+ * count as progress; notes are indexed separately. Everything is newest first,
+ * by date then time.
+ *   byDate:         Map<date, Log[]>
+ *   dates:          date[]
+ *   byProject:      Map<projectId, { days: [{ date, items }], count, last, first }>
+ *   notesByProject: Map<projectId, Map<date, Note[]>>
  */
 export function index() {
   if (indexCache?.rev === rev) return indexCache;
   const { projects, updates } = cur();
-  const sorted = [...updates].sort((a, b) =>
-    a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : b.date.localeCompare(a.date));
+  const sorted = updates
+    .map((u) => [`${u.date} ${timeOf(u) ?? ''} ${u.createdAt}`, u])
+    .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+    .map(([, u]) => u);
 
   const byDate = new Map();
   const byProject = new Map(projects.map((p) => [p.id, { days: [], count: 0, last: null, first: null }]));
+  const notesByProject = new Map(projects.map((p) => [p.id, new Map()]));
   for (const u of sorted) {
+    if (u.kind === 'note') {
+      const notes = notesByProject.get(u.projectId);
+      if (!notes) continue;
+      if (!notes.has(u.date)) notes.set(u.date, []);
+      notes.get(u.date).push(u);
+      continue;
+    }
     if (!byDate.has(u.date)) byDate.set(u.date, []);
     byDate.get(u.date).push(u);
 
@@ -322,8 +349,17 @@ export function index() {
     p.last ??= u.date;
     p.first = u.date;
   }
-  indexCache = { rev, byDate, dates: [...byDate.keys()], byProject };
+  indexCache = { rev, byDate, dates: [...byDate.keys()], byProject, notesByProject };
   return indexCache;
+}
+
+/** A project's days that have logs or notes, newest first: [{ date, notes, logs }]. */
+export function projectDays(id) {
+  const { byProject, notesByProject } = index();
+  const logs = new Map((byProject.get(id)?.days ?? []).map((d) => [d.date, d.items]));
+  const notes = notesByProject.get(id) ?? new Map();
+  return [...new Set([...logs.keys(), ...notes.keys()])].sort().reverse()
+    .map((date) => ({ date, notes: notes.get(date) ?? [], logs: logs.get(date) ?? [] }));
 }
 
 /** Day of the project's latest update, or of its creation if it has none yet. */
@@ -349,14 +385,30 @@ export function orderedProjects({ sort = activeProfile().sort, statuses = ['acti
 
 // ------------------------------------------------------------------ profiles
 
-export const profiles = () =>
-  [...doc.profiles].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name));
+/** Profiles in the user's order; ones never reordered follow, oldest first. */
+export const profiles = () => [...doc.profiles].sort((a, b) =>
+  (a.order ?? 1e9) - (b.order ?? 1e9) || a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name));
 export const getProfile = (id) => doc.profiles.find((p) => p.id === id);
 export const activeProfile = () => getProfile(device.activeProfile);
 
 export function profileStats(id) {
   const d = doc.data[id] ?? emptyData();
-  return { projects: d.projects.length, updates: d.updates.length };
+  const notes = d.updates.filter((u) => u.kind === 'note').length;
+  return { projects: d.projects.length, logs: d.updates.length - notes, notes };
+}
+
+/** Moves a profile one place 'up' or 'down' in the list. */
+export function moveProfile(id, dir) {
+  const list = profiles();
+  const i = list.findIndex((p) => p.id === id);
+  const j = dir === 'up' ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  const t = now();
+  list.forEach((p, k) => {
+    if (p.order !== k) Object.assign(p, { order: k, updatedAt: t });
+  });
+  commitEdit();
 }
 
 export function switchProfile(id) {
@@ -493,9 +545,9 @@ export function restoreProject({ project, updates }) {
 
 // ------------------------------------------------------------------ updates
 
-export function addUpdate({ projectId, date, text }) {
+export function addUpdate({ projectId, date, text, kind = 'log', time = null }) {
   const t = now();
-  const u = { id: uid(), projectId, date, text: text.trim(), createdAt: t, updatedAt: t };
+  const u = shapeUpdate({ id: uid(), projectId, kind, date, time, text: text.trim(), createdAt: t, updatedAt: t });
   cur().updates.push(u);
   commitEdit();
   return u;

@@ -52,7 +52,7 @@ window.addEventListener('hashchange', route);
 // ------------------------------------------------------------------ actions
 
 const actions = {
-  'add-update': (el) => sheets.updateForm({ projectId: el.dataset.project, date: el.dataset.date }),
+  'add-update': (el) => sheets.updateForm({ projectId: el.dataset.project, date: el.dataset.date, kind: el.dataset.kind }),
   'edit-update': (el) => sheets.updateForm({ id: el.dataset.id }),
   'new-project': () => sheets.projectForm(),
   'edit-project': (el) => sheets.projectForm({ id: el.dataset.id }),

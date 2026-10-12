@@ -1,19 +1,39 @@
-// Bottom sheets: logging/editing updates, projects, day details and settings.
+// Bottom sheets: logs and notes, projects, day details, profiles, sync and settings.
 
 import * as store from './store.js';
 import { todayKey, toKey, addDays, cardLabel, fullDate, dayHeading, startOfWeek, diffDays } from './dates.js';
 import { openSheet, confirmSheet, toast, esc, plural } from './ui.js';
-import { dayBlock, swatches } from './components.js';
+import { dayBlock, entryItem, swatches } from './components.js';
 import * as sync from './sync.js';
 
-// ------------------------------------------------------------------ log / edit an update
+// ------------------------------------------------------------------ add / edit an entry (log or note)
 
-export function updateForm({ id, projectId, date } = {}) {
+const KIND = {
+  log: {
+    add: 'Log an update', edit: 'Edit log', label: 'What did you get done?', submit: 'Log it',
+    placeholder: 'e.g. Drafted the intro, sent it to Anna', missing: 'Write a few words about what you did.',
+    hint: 'Counts as progress in Projects, Daily and Calendar.',
+  },
+  note: {
+    add: 'Add a note', edit: 'Edit note', label: 'Note', submit: 'Save note',
+    placeholder: 'e.g. Waiting for Anna’s feedback before the next step', missing: 'Write the note.',
+    hint: 'A remark for yourself. Shown on the project’s page, not counted as progress.',
+  },
+};
+
+const nowTime = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+export function updateForm({ id, projectId, date, kind } = {}) {
   const existing = id ? store.getUpdate(id) : null;
   if (id && !existing) return;
   const active = store.orderedProjects({ sort: 'recent' });
   let pid = existing?.projectId ?? projectId ?? (active.length === 1 ? active[0].id : null);
   let day = existing?.date ?? date ?? todayKey();
+  let time = existing ? store.timeOf(existing) : nowTime();
+  let entryKind = existing?.kind ?? (kind === 'note' ? 'note' : 'log');
 
   const chips = () => {
     const list = store.orderedProjects({ sort: 'recent', statuses: ['active', 'inactive'] });
@@ -26,37 +46,43 @@ export function updateForm({ id, projectId, date } = {}) {
       '<button type="button" class="pchip pchip-new" data-new-project>+ New project</button>';
   };
 
-  openSheet({
-    title: existing ? 'Edit update' : 'Log an update',
+  const sheet = openSheet({
+    title: existing ? KIND[entryKind].edit : KIND[entryKind].add,
     body: () => `
       <form class="form" novalidate>
+        <div class="seg seg-kind" role="group" aria-label="Entry type">
+          ${['log', 'note'].map((k) => `<button type="button" data-kind="${k}" class="${k === entryKind ? 'is-on' : ''}" aria-pressed="${k === entryKind}">${k === 'log' ? 'Log' : 'Note'}</button>`).join('')}
+        </div>
+        <p class="muted small kind-hint">${KIND[entryKind].hint}</p>
         <div class="field">
           <span class="label">Project</span>
           <div class="pchips">${chips()}</div>
         </div>
         <div class="field">
-          <span class="label">Day</span>
+          <span class="label">When</span>
           <div class="daychips">
             <button type="button" class="chip" data-day="0">Today</button>
             <button type="button" class="chip" data-day="1">Yesterday</button>
             <input type="date" class="date-input" value="${day}" aria-label="Date" required>
+            <input type="time" class="date-input time-input" value="${time ?? ''}" aria-label="Time">
           </div>
         </div>
         <label class="field">
-          <span class="label">What did you get done?</span>
-          <textarea rows="4" placeholder="e.g. Drafted the intro, sent it to Anna" enterkeyhint="enter">${esc(existing?.text ?? '')}</textarea>
+          <span class="label" data-text-label>${KIND[entryKind].label}</span>
+          <textarea rows="4" placeholder="${KIND[entryKind].placeholder}" enterkeyhint="enter">${esc(existing?.text ?? '')}</textarea>
         </label>
         <p class="form-error" role="alert"></p>
         <div class="btn-row">
           ${existing ? '<button type="button" class="btn btn-danger-ghost" data-delete>Delete</button>' : ''}
           <span class="spacer"></span>
-          <button type="submit" class="btn btn-primary">${existing ? 'Save' : 'Log it'}</button>
+          <button type="submit" class="btn btn-primary">${existing ? 'Save' : KIND[entryKind].submit}</button>
         </div>
       </form>`,
-    mount: (b, sheet) => {
+    mount: (b) => {
       const form = b.querySelector('form');
       const ta = b.querySelector('textarea');
-      const dateInput = b.querySelector('.date-input');
+      const dateInput = b.querySelector('.date-input[type="date"]');
+      const timeInput = b.querySelector('.time-input');
       const err = b.querySelector('.form-error');
       const chipBox = b.querySelector('.pchips');
 
@@ -65,6 +91,21 @@ export function updateForm({ id, projectId, date } = {}) {
           c.classList.toggle('is-on', addDays(todayKey(), -Number(c.dataset.day)) === day));
       };
       syncDay();
+
+      // Switching between log and note keeps everything typed so far.
+      b.querySelectorAll('[data-kind]').forEach((btn) => btn.addEventListener('click', () => {
+        entryKind = btn.dataset.kind;
+        const k = KIND[entryKind];
+        b.querySelectorAll('[data-kind]').forEach((x) => {
+          x.classList.toggle('is-on', x === btn);
+          x.setAttribute('aria-pressed', x === btn);
+        });
+        b.querySelector('.kind-hint').textContent = k.hint;
+        b.querySelector('[data-text-label]').textContent = k.label;
+        ta.placeholder = k.placeholder;
+        if (!existing) form.querySelector('[type="submit"]').textContent = k.submit;
+        sheet.el.querySelector('.sheet-h h2').textContent = existing ? k.edit : k.add;
+      }));
 
       chipBox.addEventListener('click', (e) => {
         const chip = e.target.closest('[data-pid]');
@@ -91,6 +132,9 @@ export function updateForm({ id, projectId, date } = {}) {
         if (dateInput.value) day = dateInput.value;
         syncDay();
       });
+      timeInput.addEventListener('change', () => {
+        time = timeInput.value || null;
+      });
       ta.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) form.requestSubmit();
       });
@@ -99,15 +143,17 @@ export function updateForm({ id, projectId, date } = {}) {
         e.preventDefault();
         const text = ta.value.trim();
         if (!pid || !store.getProject(pid)) return void (err.textContent = 'Pick a project.');
-        if (!text) return void (err.textContent = 'Write a few words about what you did.', ta.focus());
+        if (!text) return void (err.textContent = KIND[entryKind].missing, ta.focus());
         if (!day) return void (err.textContent = 'Pick a day.');
         sheet.close();
+        const entry = { projectId: pid, kind: entryKind, date: day, time, text };
+        const noun = entryKind === 'note' ? 'Note' : 'Log';
         if (existing) {
-          store.editUpdate(existing.id, { projectId: pid, date: day, text });
-          toast('Update saved');
+          store.editUpdate(existing.id, entry);
+          toast(`${noun} saved`);
         } else {
-          const u = store.addUpdate({ projectId: pid, date: day, text });
-          toast(`Logged · ${store.getProject(pid).name} · ${cardLabel(day)}`, {
+          const u = store.addUpdate(entry);
+          toast(`${entryKind === 'note' ? 'Note added' : 'Logged'} · ${store.getProject(pid).name} · ${cardLabel(day)}`, {
             action: 'Undo',
             onAction: () => store.deleteUpdate(u.id),
           });
@@ -117,7 +163,7 @@ export function updateForm({ id, projectId, date } = {}) {
       b.querySelector('[data-delete]')?.addEventListener('click', () => {
         sheet.close();
         const removed = store.deleteUpdate(existing.id);
-        toast('Update deleted', { action: 'Undo', onAction: () => store.restoreUpdate(removed) });
+        toast(`${removed.kind === 'note' ? 'Note' : 'Log'} deleted`, { action: 'Undo', onAction: () => store.restoreUpdate(removed) });
       });
 
       if (pid) requestAnimationFrame(() => {
@@ -225,6 +271,7 @@ export function projectSheet(id) {
       const p = store.getProject(id);
       if (!p) return null;
       const info = store.index().byProject.get(id);
+      const days = store.projectDays(id);    // notes first, then logs, newest first
       const today = todayKey();
       const ws = store.settings().weekStart;
       const weekStart = startOfWeek(today, ws);
@@ -252,25 +299,26 @@ export function projectSheet(id) {
             <div><b>${info.count}</b><span>total</span></div>
             <div><b>${info.days.length}</b><span>active days</span></div>
           </div>
-          <div class="spark" aria-label="Updates per week, last 12 weeks">
+          <div class="spark" aria-label="Logs per week, last 12 weeks">
             ${spark.map((s) => `<i style="--h:${(s.c / sparkMax) * 100}%" title="Week of ${s.w}: ${s.c}"></i>`).join('')}
           </div>
           <div class="spark-axis"><span>12 weeks ago</span><span>this week</span></div>
           ${arrangeControls(p)}
           <div class="btn-row">
-            <button class="btn" data-action="edit-project" data-id="${id}">Edit project</button>
+            <button class="btn" data-action="edit-project" data-id="${id}">Edit</button>
             <span class="spacer"></span>
-            <button class="btn btn-primary" data-action="add-update" data-project="${id}">Log update</button>
+            <button class="btn" data-action="add-update" data-project="${id}" data-kind="note">+ Note</button>
+            <button class="btn btn-primary" data-action="add-update" data-project="${id}">+ Log</button>
           </div>
           <h3 class="section-h">History</h3>
-          ${info.days.length ? `<ol class="hist">${info.days.map((d, i) => {
-            const gap = i < info.days.length - 1 ? diffDays(d.date, info.days[i + 1].date) : 0;
+          ${days.length ? `<ol class="hist">${days.map((d, i) => {
+            const gap = i < days.length - 1 ? diffDays(d.date, days[i + 1].date) : 0;
             return `
-              <li>
+              <li class="${d.logs.length ? '' : 'notes-only'}">
                 <div class="hist-date"><b>${cardLabel(d.date, today)}</b>${gap > 1 ? `<span>${gap} days after previous</span>` : ''}</div>
-                <ul class="day-items">${d.items.map((u) => `<li><button data-action="edit-update" data-id="${u.id}">${esc(u.text)}</button></li>`).join('')}</ul>
+                <ul class="day-items">${[...d.notes, ...d.logs].map((u) => entryItem(u)).join('')}</ul>
               </li>`;
-          }).join('')}</ol>` : '<p class="muted">No updates yet. Tap “Log update” to add the first one.</p>'}
+          }).join('')}</ol>` : '<p class="muted">Nothing yet. Log progress with “+ Log”, or jot a remark with “+ Note”.</p>'}
         </div>`;
     },
   });
@@ -349,18 +397,19 @@ export function projectDaySheet(projectId, date) {
     title: () => store.getProject(projectId)?.name ?? '',
     body: () => {
       const p = store.getProject(projectId);
-      const items = (store.index().byDate.get(date) ?? []).filter((u) => u.projectId === projectId);
-      if (!p || !items.length) return null;
+      const day = store.projectDays(projectId).find((d) => d.date === date);
+      if (!p || !day) return null;
       return `
-        <p class="sheet-sub">${fullDate(date)}</p>
+        <p class="sheet-sub">${fullDate(date)} · ${plural(day.logs.length, 'log')}${day.notes.length ? ` · ${plural(day.notes.length, 'note')}` : ''}</p>
         <ul class="day-items day-items-lg" style="--c:${esc(p.color)}">
-          ${items.map((u) => `<li><button data-action="edit-update" data-id="${u.id}">${esc(u.text)}</button></li>`).join('')}
+          ${[...day.notes, ...day.logs].map((u) => entryItem(u)).join('')}
         </ul>
-        <p class="muted small">Tap an update to edit it.</p>
+        <p class="muted small">Tap an entry to edit it.</p>
         <div class="btn-row">
-          <button class="btn" data-action="open-project" data-id="${p.id}">Full history</button>
+          <button class="btn" data-action="open-project" data-id="${p.id}">History</button>
           <span class="spacer"></span>
-          <button class="btn btn-primary" data-action="add-update" data-project="${p.id}" data-date="${date}">Add another</button>
+          <button class="btn" data-action="add-update" data-project="${p.id}" data-date="${date}" data-kind="note">+ Note</button>
+          <button class="btn btn-primary" data-action="add-update" data-project="${p.id}" data-date="${date}">+ Log</button>
         </div>`;
     },
   });
@@ -464,6 +513,9 @@ function since(iso) {
   return cardLabel(toKey(new Date(iso)));
 }
 
+/** "3 projects · 120 logs · 4 notes" */
+const countLine = (n) => `${plural(n.projects, 'project')} · ${plural(n.logs, 'log')}${n.notes ? ` · ${plural(n.notes, 'note')}` : ''}`;
+
 const SYNC_LABEL = {
   off: 'Off',
   synced: 'Up to date',
@@ -547,7 +599,7 @@ export function settingsSheet() {
 
         <section class="set">
           <h3 class="section-h">Data</h3>
-          <p class="muted small">“${esc(profile.name)}”: ${plural(st.projects.length, 'project')} · ${plural(st.updates.length, 'update')}. All profiles: ${kb} KB.</p>
+          <p class="muted small">“${esc(profile.name)}”: ${countLine(store.profileStats(profile.id))}. All profiles: ${kb} KB.</p>
           ${st.projects.length
             ? `<button class="btn btn-danger-ghost" data-set="erase">Erase “${esc(profile.name)}” data</button>`
             : '<button class="btn" data-action="load-sample">Load sample data</button>'}
@@ -602,32 +654,45 @@ export function settingsSheet() {
 // ------------------------------------------------------------------ profiles
 
 export function profilesSheet() {
-  openSheet({
+  let reordering = false;
+  const arrow = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+  const sheet = openSheet({
     live: true,
     title: 'Profiles',
     body: () => {
+      const list = store.profiles();
       const active = store.activeProfile().id;
       return `
-        <p class="sheet-sub">Each profile has its own projects and history, for example one per job.</p>
+        <div class="sheet-sub-row">
+          <p class="sheet-sub">${reordering ? 'Use the arrows to change the order.' : 'Each profile has its own projects and history, for example one per job.'}</p>
+          ${list.length > 1 ? `<button class="chip ${reordering ? 'is-on' : ''}" data-reorder>${reordering ? 'Done' : 'Reorder'}</button>` : ''}
+        </div>
         <ul class="profiles">
-          ${store.profiles().map((p) => {
-            const n = store.profileStats(p.id);
-            return `
-              <li class="${p.id === active ? 'is-on' : ''}" style="--c:${esc(p.color)}">
-                <button class="prof-main" data-switch="${p.id}" ${p.id === active ? 'aria-current="true"' : ''}>
-                  <span class="prof-dot"></span>
-                  <span class="grow"><b>${esc(p.name)}</b><span class="muted small">${plural(n.projects, 'project')} · ${plural(n.updates, 'update')}</span></span>
-                  ${p.id === active ? '<svg viewBox="0 0 24 24" aria-hidden="true" class="check"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>' : ''}
-                </button>
+          ${list.map((p, i) => `
+            <li class="${p.id === active ? 'is-on' : ''}" style="--c:${esc(p.color)}">
+              <button class="prof-main" ${reordering ? 'tabindex="-1"' : `data-switch="${p.id}"`} ${p.id === active ? 'aria-current="true"' : ''}>
+                <span class="prof-dot"></span>
+                <span class="grow"><b>${esc(p.name)}</b><span class="muted small">${countLine(store.profileStats(p.id))}</span></span>
+                ${p.id === active && !reordering ? '<svg viewBox="0 0 24 24" aria-hidden="true" class="check"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>' : ''}
+              </button>
+              ${reordering ? `
+                <button class="icon-btn" data-move="up" data-id="${p.id}" aria-label="Move ${esc(p.name)} up" ${i === 0 ? 'disabled' : ''}>${arrow('M12 19V5M6 11l6-6 6 6')}</button>
+                <button class="icon-btn" data-move="down" data-id="${p.id}" aria-label="Move ${esc(p.name)} down" ${i === list.length - 1 ? 'disabled' : ''}>${arrow('M12 5v14M6 13l6 6 6-6')}</button>`
+              : `
                 <button class="icon-btn" data-edit-profile="${p.id}" aria-label="Edit ${esc(p.name)}">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4ZM13.5 6.5l4 4"/></svg>
-                </button>
-              </li>`;
-          }).join('')}
+                  ${arrow('M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4ZM13.5 6.5l4 4')}
+                </button>`}
+            </li>`).join('')}
         </ul>
-        <button class="btn btn-block" data-new-profile>+ New profile</button>`;
+        ${reordering ? '' : '<button class="btn btn-block" data-new-profile>+ New profile</button>'}`;
     },
-    mount: (b, sheet) => {
+    mount: (b) => {
+      b.querySelector('[data-reorder]')?.addEventListener('click', () => {
+        reordering = !reordering;
+        sheet.refresh();
+      });
+      b.querySelectorAll('[data-move]').forEach((btn) =>
+        btn.addEventListener('click', () => store.moveProfile(btn.dataset.id, btn.dataset.move)));
       b.querySelectorAll('[data-switch]').forEach((btn) => btn.addEventListener('click', () => {
         sheet.close();
         if (btn.dataset.switch === store.activeProfile().id) return;
@@ -636,7 +701,7 @@ export function profilesSheet() {
       }));
       b.querySelectorAll('[data-edit-profile]').forEach((btn) =>
         btn.addEventListener('click', () => profileForm({ id: btn.dataset.editProfile })));
-      b.querySelector('[data-new-profile]').addEventListener('click', () => profileForm({
+      b.querySelector('[data-new-profile]')?.addEventListener('click', () => profileForm({
         onSaved: (p) => {
           sheet.close();
           store.switchProfile(p.id);
@@ -703,7 +768,7 @@ export function profileForm({ id, onSaved } = {}) {
         const n = store.profileStats(id);
         const ok = await confirmSheet({
           title: 'Delete profile?',
-          message: `“${existing.name}” and its ${plural(n.projects, 'project')} and ${plural(n.updates, 'update')} will be deleted${store.syncConfig() ? ' on every synced device' : ''}.`,
+          message: `“${existing.name}” and everything in it (${countLine(n)}) will be deleted${store.syncConfig() ? ' on every synced device' : ''}.`,
           confirm: 'Delete',
           danger: true,
         });

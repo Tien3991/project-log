@@ -472,6 +472,8 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
   color: color-mix(in srgb, var(--c) 62%, var(--text));
   white-space: nowrap;
 }
+.tl-note { display: inline-flex; color: var(--warn); }
+.tl-note svg { width: 13px; height: 13px; stroke-width: 2.2; }
 .tl-date b {
   min-width: 17px;
   padding: 0 5px;
@@ -555,9 +557,25 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
   padding: 4px 0 4px 13px;
   font-size: 14.5px;
   line-height: 1.4;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   border-radius: 6px;
+}
+.entry-text { white-space: pre-wrap; }
+.day-items time { margin-right: 7px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.day-items li.is-note button {
+  margin: 3px 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 11%, var(--surface));
+}
+.day-items li.is-note button::before { display: none; }
+.note-tag {
+  margin-right: 7px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--warn);
 }
 .day-items li button::before {
   content: "";
@@ -771,6 +789,13 @@ textarea:focus, .text-input:focus { outline: none; border-color: var(--accent); 
 .pchip.is-dim:not(.is-on) { color: var(--muted); border-style: dashed; }
 
 .daychips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.seg-kind { display: flex; }
+.seg-kind button { flex: 1; padding: 8px 12px; font-size: 14px; }
+.kind-hint { margin: 6px 0 14px; }
+.time-input { width: 108px; }
+.sheet-sub-row { display: flex; align-items: center; gap: 10px; margin: -4px 0 10px; }
+.sheet-sub-row .sheet-sub { flex: 1; margin: 0; }
+.icon-btn:disabled { opacity: .3; cursor: default; }
 .date-input {
   height: 34px;
   padding: 0 12px;
@@ -828,7 +853,8 @@ textarea:focus, .text-input:focus { outline: none; border-color: var(--accent); 
 }
 .hist-date { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 13.5px; }
 .hist-date span { font-size: 12px; color: var(--muted); }
-.hist .day-items li button { padding-left: 0; }
+.hist .day-items li:not(.is-note) button { padding-left: 0; }
+.hist > li.notes-only::before { background: var(--bg); box-shadow: inset 0 0 0 2px var(--c), 0 0 0 3px var(--bg); }
 .hist .day-items li button::before { display: none; }
 
 /* ------------------------------------------------------------------ settings */
